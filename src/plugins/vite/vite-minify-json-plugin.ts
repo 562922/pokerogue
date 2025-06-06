@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import { type Plugin as VitePlugin } from "vite";
+import type { Plugin as VitePlugin } from "vite";
 
 /**
  * Crawl a directory (recursively if wanted) for json files and minifies found ones.
@@ -8,7 +8,7 @@ import { type Plugin as VitePlugin } from "vite";
  * @param recursive if true, will crawl subdirectories
  */
 function applyToDir(dir: string, recursive?: boolean) {
-  const files = fs.readdirSync(dir).filter((file) => !/^\..*/.test(file));
+  const files = fs.readdirSync(dir).filter(file => !/^\..*/.test(file));
 
   for (const file of files) {
     const filePath = path.join(dir, file);
@@ -43,7 +43,7 @@ export function minifyJsonPlugin(basePath: string | string[], recursive?: boolea
       console.log("Minifying JSON files...");
       const basePathes = Array.isArray(basePath) ? basePath : [basePath];
 
-      basePathes.forEach((basePath) => {
+      basePathes.forEach(basePath => {
         const baseDir = path.resolve(buildDir, basePath);
         if (fs.existsSync(baseDir)) {
           applyToDir(baseDir, recursive);

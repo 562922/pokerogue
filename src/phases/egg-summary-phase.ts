@@ -1,8 +1,7 @@
-import BattleScene from "#app/battle-scene";
+import { globalScene } from "#app/global-scene";
 import { Phase } from "#app/phase";
-import { Mode } from "#app/ui/ui";
-import EggHatchSceneHandler from "#app/ui/egg-hatch-scene-handler";
-import { EggHatchData } from "#app/data/egg-hatch-data";
+import { UiMode } from "#enums/ui-mode";
+import type { EggHatchData } from "#app/data/egg-hatch-data";
 
 /**
  * Class that represents the egg summary phase
@@ -11,10 +10,9 @@ import { EggHatchData } from "#app/data/egg-hatch-data";
  */
 export class EggSummaryPhase extends Phase {
   private eggHatchData: EggHatchData[];
-  private eggHatchHandler: EggHatchSceneHandler;
 
-  constructor(scene: BattleScene, eggHatchData: EggHatchData[]) {
-    super(scene);
+  constructor(eggHatchData: EggHatchData[]) {
+    super();
     this.eggHatchData = eggHatchData;
   }
 
@@ -24,11 +22,9 @@ export class EggSummaryPhase extends Phase {
     // updates next pokemon once the current update has been completed
     const updateNextPokemon = (i: number) => {
       if (i >= this.eggHatchData.length) {
-        this.scene.ui.setModeForceTransition(Mode.EGG_HATCH_SUMMARY, this.eggHatchData).then(() => {
-          this.scene.fadeOutBgm(undefined, false);
-          this.eggHatchHandler = this.scene.ui.getHandler() as EggHatchSceneHandler;
+        globalScene.ui.setModeForceTransition(UiMode.EGG_HATCH_SUMMARY, this.eggHatchData).then(() => {
+          globalScene.fadeOutBgm(undefined, false);
         });
-
       } else {
         this.eggHatchData[i].setDex();
         this.eggHatchData[i].updatePokemon().then(() => {
@@ -39,12 +35,12 @@ export class EggSummaryPhase extends Phase {
       }
     };
     updateNextPokemon(0);
-
   }
 
   end() {
-    this.eggHatchHandler.clear();
-    this.scene.ui.setModeForceTransition(Mode.MESSAGE).then(() => {});
-    super.end();
+    globalScene.time.delayedCall(250, () => globalScene.setModifiersVisible(true));
+    globalScene.ui.setModeForceTransition(UiMode.MESSAGE).then(() => {
+      super.end();
+    });
   }
 }

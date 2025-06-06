@@ -1,11 +1,13 @@
-import Pokemon from "#app/field/pokemon";
+import { globalScene } from "#app/global-scene";
+import type Pokemon from "#app/field/pokemon";
 import { BattlePhase } from "./battle-phase";
 
 type PokemonFunc = (pokemon: Pokemon) => void;
 
 export abstract class FieldPhase extends BattlePhase {
   executeForAll(func: PokemonFunc): void {
-    const field = this.scene.getField(true).filter(p => p.summonData);
-    field.forEach(pokemon => func(pokemon));
+    for (const pokemon of globalScene.getField(true)) {
+      func(pokemon);
+    }
   }
 }

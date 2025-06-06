@@ -1,19 +1,19 @@
-import BattleScene from "../battle-scene";
-import { Mode } from "./ui";
+import { UiMode } from "#enums/ui-mode";
 import PokemonIconAnimHandler, { PokemonIconAnimMode } from "./pokemon-icon-anim-handler";
 import MessageUiHandler from "./message-ui-handler";
 import { getEggTierForSpecies } from "../data/egg";
-import {Button} from "#enums/buttons";
-import { Gender } from "#app/data/gender";
-import { getVariantTint } from "#app/data/variant";
-import { EggTier } from "#app/enums/egg-type";
+import { Button } from "#enums/buttons";
 import PokemonHatchInfoContainer from "./pokemon-hatch-info-container";
 import { EggSummaryPhase } from "#app/phases/egg-summary-phase";
-import { DexAttr } from "#app/system/game-data";
-import { EggHatchData } from "#app/data/egg-hatch-data";
+import type { EggHatchData } from "#app/data/egg-hatch-data";
+import ScrollableGridUiHandler from "./scrollable-grid-handler";
+import { HatchedPokemonContainer } from "./hatched-pokemon-container";
+import { ScrollBar } from "#app/ui/scroll-bar";
+import { globalScene } from "#app/global-scene";
 
-const iconContainerX = 115;
+const iconContainerX = 112;
 const iconContainerY = 9;
+const numRows = 9;
 const numCols = 11;
 const iconSize = 18;
 
@@ -27,18 +27,23 @@ export default class EggSummaryUiHandler extends MessageUiHandler {
   private eggHatchContainer: Phaser.GameObjects.Container;
   /** holds the icon containers and info container */
   private summaryContainer: Phaser.GameObjects.Container;
-  /** container for the mini pokemon sprites */
-  private pokemonIconSpritesContainer: Phaser.GameObjects.Container;
-  /** container for the icons displayed alongside the mini icons (e.g. shiny, HA capsule) */
+  /** container for the each pokemon sprites and icons */
   private pokemonIconsContainer: Phaser.GameObjects.Container;
+  /** list of the containers added to pokemonIconsContainer for easier access */
+  private pokemonContainers: HatchedPokemonContainer[];
+
   /** hatch info container that displays the current pokemon / hatch (main element on left hand side) */
   private infoContainer: PokemonHatchInfoContainer;
   /** handles jumping animations for the pokemon sprite icons */
   private iconAnimHandler: PokemonIconAnimHandler;
   private eggHatchBg: Phaser.GameObjects.Image;
-  private cursorObj: Phaser.GameObjects.Image;
   private eggHatchData: EggHatchData[];
 
+  private scrollGridHandler: ScrollableGridUiHandler;
+  private cursorObj: Phaser.GameObjects.Image;
+
+  /** used to add a delay before which it is not possible to exit the summary */
+  private blockExit: boolean;
 
   /**
    * Allows subscribers to listen for events
@@ -48,76 +53,90 @@ export default class EggSummaryUiHandler extends MessageUiHandler {
    */
   public readonly eventTarget: EventTarget = new EventTarget();
 
-  constructor(scene: BattleScene) {
-    super(scene, Mode.EGG_HATCH_SUMMARY);
+  constructor() {
+    super(UiMode.EGG_HATCH_SUMMARY);
   }
-
 
   setup() {
     const ui = this.getUi();
 
-    this.summaryContainer = this.scene.add.container(0, -this.scene.game.canvas.height / 6);
+    this.summaryContainer = globalScene.add.container(0, -globalScene.game.canvas.height / 6);
     this.summaryContainer.setVisible(false);
     ui.add(this.summaryContainer);
 
-    this.eggHatchContainer = this.scene.add.container(0, -this.scene.game.canvas.height / 6);
+    this.eggHatchContainer = globalScene.add.container(0, -globalScene.game.canvas.height / 6);
     this.eggHatchContainer.setVisible(false);
     ui.add(this.eggHatchContainer);
 
     this.iconAnimHandler = new PokemonIconAnimHandler();
-    this.iconAnimHandler.setup(this.scene);
+    this.iconAnimHandler.setup();
 
-    this.eggHatchBg = this.scene.add.image(0, 0, "egg_summary_bg");
+    this.eggHatchBg = globalScene.add.image(0, 0, "egg_summary_bg");
     this.eggHatchBg.setOrigin(0, 0);
     this.eggHatchContainer.add(this.eggHatchBg);
 
-    this.pokemonIconsContainer = this.scene.add.container(iconContainerX, iconContainerY);
-    this.pokemonIconSpritesContainer = this.scene.add.container(iconContainerX, iconContainerY);
-    this.summaryContainer.add(this.pokemonIconsContainer);
-    this.summaryContainer.add(this.pokemonIconSpritesContainer);
-
-    this.cursorObj = this.scene.add.image(0, 0, "select_cursor");
+    this.cursorObj = globalScene.add.image(0, 0, "select_cursor");
     this.cursorObj.setOrigin(0, 0);
     this.summaryContainer.add(this.cursorObj);
 
-    this.infoContainer = new PokemonHatchInfoContainer(this.scene, this.summaryContainer);
+    this.pokemonContainers = [];
+    this.pokemonIconsContainer = globalScene.add.container(iconContainerX, iconContainerY);
+    this.summaryContainer.add(this.pokemonIconsContainer);
+
+    this.infoContainer = new PokemonHatchInfoContainer(this.summaryContainer);
     this.infoContainer.setup();
     this.infoContainer.changeToEggSummaryLayout();
     this.infoContainer.setVisible(true);
     this.summaryContainer.add(this.infoContainer);
+
+    const scrollBar = new ScrollBar(
+      iconContainerX + numCols * iconSize,
+      iconContainerY + 3,
+      4,
+      globalScene.game.canvas.height / 6 - 20,
+      numRows,
+    );
+    this.summaryContainer.add(scrollBar);
+
+    this.scrollGridHandler = new ScrollableGridUiHandler(this, numRows, numCols)
+      .withScrollBar(scrollBar)
+      .withUpdateGridCallBack(() => this.updatePokemonIcons())
+      .withUpdateSingleElementCallback((i: number) => this.infoContainer.showHatchInfo(this.eggHatchData[i]));
 
     this.cursor = -1;
   }
 
   clear() {
     super.clear();
+    this.scrollGridHandler.reset();
     this.cursor = -1;
+
     this.summaryContainer.setVisible(false);
-    this.pokemonIconSpritesContainer.removeAll(true);
     this.pokemonIconsContainer.removeAll(true);
+    this.pokemonContainers = [];
     this.eggHatchBg.setVisible(false);
     this.getUi().hideTooltip();
+
     // Note: Questions on garbage collection go to @frutescens
-    const activeKeys = this.scene.getActiveKeys();
+    const activeKeys = globalScene.getActiveKeys();
     // Removing unnecessary sprites from animation manager
-    const animKeys = Object.keys(this.scene.anims["anims"]["entries"]);
+    const animKeys = Object.keys(globalScene.anims["anims"]["entries"]);
     animKeys.forEach(key => {
       if (key.startsWith("pkmn__") && !activeKeys.includes(key)) {
-        this.scene.anims.remove(key);
+        globalScene.anims.remove(key);
       }
     });
     // Removing unnecessary cries from audio cache
-    const audioKeys = Object.keys(this.scene.cache.audio.entries.entries);
+    const audioKeys = Object.keys(globalScene.cache.audio.entries.entries);
     audioKeys.forEach(key => {
       if (key.startsWith("cry/") && !activeKeys.includes(key)) {
-        delete this.scene.cache.audio.entries.entries[key];
+        delete globalScene.cache.audio.entries.entries[key];
       }
     });
     // Clears eggHatchData in EggSummaryUiHandler
     this.eggHatchData.length = 0;
     // Removes Pokemon icons in EggSummaryUiHandler
     this.iconAnimHandler.removeAll();
-    console.log("Egg Summary Handler cleared");
   }
 
   /**
@@ -133,157 +152,86 @@ export default class EggSummaryUiHandler extends MessageUiHandler {
         const speciesB = b.pokemon.species;
         if (getEggTierForSpecies(speciesA) < getEggTierForSpecies(speciesB)) {
           return -1;
-        } else if (getEggTierForSpecies(speciesA) > getEggTierForSpecies(speciesB)) {
-          return 1;
-        } else {
-          if (speciesA.speciesId < speciesB.speciesId) {
-            return -1;
-          } else if (speciesA.speciesId > speciesB.speciesId) {
-            return 1;
-          } else {
-            return 0;
-          }
         }
-      }
-
-      );
+        if (getEggTierForSpecies(speciesA) > getEggTierForSpecies(speciesB)) {
+          return 1;
+        }
+        if (speciesA.speciesId < speciesB.speciesId) {
+          return -1;
+        }
+        if (speciesA.speciesId > speciesB.speciesId) {
+          return 1;
+        }
+        return 0;
+      });
     }
 
     this.getUi().bringToTop(this.summaryContainer);
     this.summaryContainer.setVisible(true);
     this.eggHatchContainer.setVisible(true);
-    this.pokemonIconsContainer.setVisible(true);
     this.eggHatchBg.setVisible(true);
     this.infoContainer.hideDisplayPokemon();
 
-    this.eggHatchData.forEach( (value: EggHatchData, i: number) => {
-      const x = (i % numCols) * iconSize;
-      const y = Math.floor(i / numCols) * iconSize;
-
-      const displayPokemon = value.pokemon;
-      const offset = 2;
-      const rightSideX = 12;
-
-      const bg = this.scene.add.image(x+2, y+5, "passive_bg");
-      bg.setOrigin(0, 0);
-      bg.setScale(0.75);
-      bg.setVisible(true);
-      this.pokemonIconsContainer.add(bg);
-
-      // set tint for passive bg
-      switch (getEggTierForSpecies(displayPokemon.species)) {
-      case EggTier.COMMON:
-        bg.setVisible(false);
-        break;
-      case EggTier.GREAT:
-        bg.setTint(0xabafff);
-        break;
-      case EggTier.ULTRA:
-        bg.setTint(0xffffaa);
-        break;
-      case EggTier.MASTER:
-        bg.setTint(0xdfffaf);
-        break;
-      }
-      const species = displayPokemon.species;
-      const female = displayPokemon.gender === Gender.FEMALE;
-      const formIndex = displayPokemon.formIndex;
-      const variant = displayPokemon.variant;
-      const isShiny = displayPokemon.shiny;
-
-      // set pokemon icon (and replace with base sprite if there is a mismatch)
-      const icon = this.scene.add.sprite(x - offset, y + offset, species.getIconAtlasKey(formIndex, isShiny, variant));
-      icon.setScale(0.5);
-      icon.setOrigin(0, 0);
-      icon.setFrame(species.getIconId(female, formIndex, isShiny, variant));
-
-      if (icon.frame.name !== species.getIconId(female, formIndex, isShiny, variant)) {
-        console.log(`${species.name}'s variant icon does not exist. Replacing with default.`);
-        icon.setTexture(species.getIconAtlasKey(formIndex, false, variant));
-        icon.setFrame(species.getIconId(female, formIndex, false, variant));
-      }
-      this.pokemonIconSpritesContainer.add(icon);
-      this.iconAnimHandler.addOrUpdate(icon, PokemonIconAnimMode.NONE);
-
-      const shiny = this.scene.add.image(x + rightSideX, y + offset * 2, "shiny_star_small");
-      shiny.setScale(0.5);
-      shiny.setVisible(displayPokemon.shiny);
-      shiny.setTint(getVariantTint(displayPokemon.variant));
-      this.pokemonIconsContainer.add(shiny);
-
-      const ha = this.scene.add.image(x + rightSideX, y + 7, "ha_capsule");
-      ha.setScale(0.5);
-      ha.setVisible((displayPokemon.hasAbility(displayPokemon.species.abilityHidden)));
-      this.pokemonIconsContainer.add(ha);
-
-      const pb = this.scene.add.image(x + rightSideX, y + offset * 7, "icon_owned");
-      pb.setOrigin(0, 0);
-      pb.setScale(0.5);
-
-      // add animation for new unlocks (new catch or new shiny or new form)
-      const dexEntry = value.dexEntryBeforeUpdate;
-      const caughtAttr = dexEntry.caughtAttr;
-      const newShiny = BigInt(1 << (displayPokemon.shiny ? 1 : 0));
-      const newVariant = BigInt(1 << (displayPokemon.variant + 4));
-      const newShinyOrVariant = ((newShiny & caughtAttr) === BigInt(0)) || ((newVariant & caughtAttr) === BigInt(0));
-      const newForm = (BigInt(1 << displayPokemon.formIndex) * DexAttr.DEFAULT_FORM & caughtAttr) === BigInt(0);
-
-      pb.setVisible(!caughtAttr || newForm);
-      if (!caughtAttr || newShinyOrVariant || newForm) {
-        this.iconAnimHandler.addOrUpdate(icon, PokemonIconAnimMode.PASSIVE);
-      }
-      this.pokemonIconsContainer.add(pb);
-
-      const em = this.scene.add.image(x, y + offset, "icon_egg_move");
-      em.setOrigin(0, 0);
-      em.setScale(0.5);
-      em.setVisible(value.eggMoveUnlocked);
-      this.pokemonIconsContainer.add(em);
-    });
-
+    this.scrollGridHandler.setTotalElements(this.eggHatchData.length);
+    this.updatePokemonIcons();
     this.setCursor(0);
-    this.scene.playSoundWithoutBgm("evolution_fanfare");
+
+    globalScene.playSoundWithoutBgm("evolution_fanfare");
+
+    // Prevent exiting the egg summary for 2 seconds if the egg hatching
+    // was skipped automatically and for 1 second otherwise
+    const exitBlockingDuration = globalScene.eggSkipPreference === 2 ? 2000 : 1000;
+    this.blockExit = true;
+    globalScene.time.delayedCall(exitBlockingDuration, () => (this.blockExit = false));
+
     return true;
+  }
+
+  /**
+   * Show the grid of Pokemon icons
+   */
+  private updatePokemonIcons(): void {
+    const itemOffset = this.scrollGridHandler.getItemOffset();
+    const eggsToShow = Math.min(numRows * numCols, this.eggHatchData.length - itemOffset);
+
+    for (let i = 0; i < numRows * numCols; i++) {
+      const hatchData = this.eggHatchData[i + itemOffset];
+      let hatchContainer = this.pokemonContainers[i];
+
+      if (i < eggsToShow) {
+        if (!hatchContainer) {
+          const x = (i % numCols) * iconSize;
+          const y = Math.floor(i / numCols) * iconSize;
+          hatchContainer = new HatchedPokemonContainer(x, y, hatchData).setVisible(false);
+          this.pokemonContainers.push(hatchContainer);
+          this.pokemonIconsContainer.add(hatchContainer);
+        }
+        hatchContainer.setVisible(true);
+        hatchContainer.updateAndAnimate(hatchData, this.iconAnimHandler);
+      } else if (hatchContainer) {
+        hatchContainer.setVisible(false);
+        this.iconAnimHandler.addOrUpdate(hatchContainer.icon, PokemonIconAnimMode.NONE);
+      }
+    }
   }
 
   processInput(button: Button): boolean {
     const ui = this.getUi();
 
     let success = false;
-    const error = false;
+    let error = false;
     if (button === Button.CANCEL) {
-      const phase = this.scene.getCurrentPhase();
-      if (phase instanceof EggSummaryPhase) {
-        phase.end();
+      if (!this.blockExit) {
+        const phase = globalScene.getCurrentPhase();
+        if (phase instanceof EggSummaryPhase) {
+          phase.end();
+        }
+        success = true;
+      } else {
+        error = true;
       }
-      ui.revertMode();
-      success = true;
     } else {
-      const count = this.eggHatchData.length;
-      const rows = Math.ceil(count / numCols);
-      const row = Math.floor(this.cursor / numCols);
-      switch (button) {
-      case Button.UP:
-        if (row) {
-          success = this.setCursor(this.cursor - numCols);
-        }
-        break;
-      case Button.DOWN:
-        if (row < rows - 2 || (row < rows - 1 && this.cursor % numCols <= (count - 1) % numCols)) {
-          success = this.setCursor(this.cursor + numCols);
-        }
-        break;
-      case Button.LEFT:
-        if (this.cursor % numCols) {
-          success = this.setCursor(this.cursor - 1);
-        }
-        break;
-      case Button.RIGHT:
-        if (this.cursor % numCols < (row < rows - 1 ? 10 : (count - 1) % numCols)) {
-          success = this.setCursor(this.cursor + 1);
-        }
-        break;
-      }
+      this.scrollGridHandler.processInput(button);
     }
 
     if (success) {
@@ -303,18 +251,19 @@ export default class EggSummaryUiHandler extends MessageUiHandler {
     changed = super.setCursor(cursor);
 
     if (changed) {
-      this.cursorObj.setPosition(iconContainerX - 1 + iconSize * (cursor % numCols), iconContainerY + 1 + iconSize * Math.floor(cursor / numCols));
+      this.cursorObj.setPosition(
+        iconContainerX - 1 + iconSize * (cursor % numCols),
+        iconContainerY + 1 + iconSize * Math.floor(cursor / numCols),
+      );
 
       if (lastCursor > -1) {
-        this.iconAnimHandler.addOrUpdate(this.pokemonIconSpritesContainer.getAt(lastCursor) as Phaser.GameObjects.Sprite, PokemonIconAnimMode.NONE);
+        this.iconAnimHandler.addOrUpdate(this.pokemonContainers[lastCursor].icon, PokemonIconAnimMode.NONE);
       }
-      this.iconAnimHandler.addOrUpdate(this.pokemonIconSpritesContainer.getAt(cursor) as Phaser.GameObjects.Sprite, PokemonIconAnimMode.ACTIVE);
+      this.iconAnimHandler.addOrUpdate(this.pokemonContainers[cursor].icon, PokemonIconAnimMode.ACTIVE);
 
-      this.infoContainer.showHatchInfo(this.eggHatchData[cursor]);
-
+      this.infoContainer.showHatchInfo(this.eggHatchData[cursor + this.scrollGridHandler.getItemOffset()]);
     }
 
     return changed;
   }
-
 }

@@ -1,151 +1,145 @@
-import BattleScene from "#app/battle-scene";
-import { BattlerIndex, BattleType } from "#app/battle";
+import type { BattlerIndex } from "#app/battle";
+import { ClassicFixedBossWaves } from "#enums/fixed-boss-waves";
+import { BattleType } from "#enums/battle-type";
+import type { CustomModifierSettings } from "#app/modifier/modifier-type";
 import { modifierTypes } from "#app/modifier/modifier-type";
-import { ExpShareModifier, ExpBalanceModifier, MultipleParticipantExpBonusModifier, PokemonExpBoosterModifier } from "#app/modifier/modifier";
-import * as Utils from "#app/utils";
-import Overrides from "#app/overrides";
 import { BattleEndPhase } from "./battle-end-phase";
 import { NewBattlePhase } from "./new-battle-phase";
 import { PokemonPhase } from "./pokemon-phase";
 import { AddEnemyBuffModifierPhase } from "./add-enemy-buff-modifier-phase";
 import { EggLapsePhase } from "./egg-lapse-phase";
-import { ExpPhase } from "./exp-phase";
 import { GameOverPhase } from "./game-over-phase";
 import { ModifierRewardPhase } from "./modifier-reward-phase";
 import { SelectModifierPhase } from "./select-modifier-phase";
-import { ShowPartyExpBarPhase } from "./show-party-exp-bar-phase";
 import { TrainerVictoryPhase } from "./trainer-victory-phase";
+import { handleMysteryEncounterVictory } from "#app/data/mystery-encounters/utils/encounter-phase-utils";
+import { globalScene } from "#app/global-scene";
+import { timedEventManager } from "#app/global-event-manager";
+import { SelectBiomePhase } from "./select-biome-phase";
 
 export class VictoryPhase extends PokemonPhase {
-  constructor(scene: BattleScene, battlerIndex: BattlerIndex) {
-    super(scene, battlerIndex);
+  /** If true, indicates that the phase is intended for EXP purposes only, and not to continue a battle to next phase */
+  isExpOnly: boolean;
+
+  constructor(battlerIndex: BattlerIndex | number, isExpOnly = false) {
+    super(battlerIndex);
+
+    this.isExpOnly = isExpOnly;
   }
 
   start() {
     super.start();
 
-    this.scene.gameData.gameStats.pokemonDefeated++;
+    const isMysteryEncounter = globalScene.currentBattle.isBattleMysteryEncounter();
 
-    const participantIds = this.scene.currentBattle.playerParticipantIds;
-    const party = this.scene.getParty();
-    const expShareModifier = this.scene.findModifier(m => m instanceof ExpShareModifier) as ExpShareModifier;
-    const expBalanceModifier = this.scene.findModifier(m => m instanceof ExpBalanceModifier) as ExpBalanceModifier;
-    const multipleParticipantExpBonusModifier = this.scene.findModifier(m => m instanceof MultipleParticipantExpBonusModifier) as MultipleParticipantExpBonusModifier;
-    const nonFaintedPartyMembers = party.filter(p => p.hp);
-    const expPartyMembers = nonFaintedPartyMembers.filter(p => p.level < this.scene.getMaxExpLevel());
-    const partyMemberExp: number[] = [];
-
-    if (participantIds.size) {
-      let expValue = this.getPokemon().getExpValue();
-      if (this.scene.currentBattle.battleType === BattleType.TRAINER) {
-        expValue = Math.floor(expValue * 1.5);
-      }
-      for (const partyMember of nonFaintedPartyMembers) {
-        const pId = partyMember.id;
-        const participated = participantIds.has(pId);
-        if (participated) {
-          partyMember.addFriendship(2);
-        }
-        if (!expPartyMembers.includes(partyMember)) {
-          continue;
-        }
-        if (!participated && !expShareModifier) {
-          partyMemberExp.push(0);
-          continue;
-        }
-        let expMultiplier = 0;
-        if (participated) {
-          expMultiplier += (1 / participantIds.size);
-          if (participantIds.size > 1 && multipleParticipantExpBonusModifier) {
-            expMultiplier += multipleParticipantExpBonusModifier.getStackCount() * 0.2;
-          }
-        } else if (expShareModifier) {
-          expMultiplier += (expShareModifier.getStackCount() * 0.2) / participantIds.size;
-        }
-        if (partyMember.pokerus) {
-          expMultiplier *= 1.5;
-        }
-        if (Overrides.XP_MULTIPLIER_OVERRIDE !== null) {
-          expMultiplier = Overrides.XP_MULTIPLIER_OVERRIDE;
-        }
-        const pokemonExp = new Utils.NumberHolder(expValue * expMultiplier);
-        this.scene.applyModifiers(PokemonExpBoosterModifier, true, partyMember, pokemonExp);
-        partyMemberExp.push(Math.floor(pokemonExp.value));
-      }
-
-      if (expBalanceModifier) {
-        let totalLevel = 0;
-        let totalExp = 0;
-        expPartyMembers.forEach((expPartyMember, epm) => {
-          totalExp += partyMemberExp[epm];
-          totalLevel += expPartyMember.level;
-        });
-
-        const medianLevel = Math.floor(totalLevel / expPartyMembers.length);
-
-        const recipientExpPartyMemberIndexes: number[] = [];
-        expPartyMembers.forEach((expPartyMember, epm) => {
-          if (expPartyMember.level <= medianLevel) {
-            recipientExpPartyMemberIndexes.push(epm);
-          }
-        });
-
-        const splitExp = Math.floor(totalExp / recipientExpPartyMemberIndexes.length);
-
-        expPartyMembers.forEach((_partyMember, pm) => {
-          partyMemberExp[pm] = Phaser.Math.Linear(partyMemberExp[pm], recipientExpPartyMemberIndexes.indexOf(pm) > -1 ? splitExp : 0, 0.2 * expBalanceModifier.getStackCount());
-        });
-      }
-
-      for (let pm = 0; pm < expPartyMembers.length; pm++) {
-        const exp = partyMemberExp[pm];
-
-        if (exp) {
-          const partyMemberIndex = party.indexOf(expPartyMembers[pm]);
-          this.scene.unshiftPhase(expPartyMembers[pm].isOnField() ? new ExpPhase(this.scene, partyMemberIndex, exp) : new ShowPartyExpBarPhase(this.scene, partyMemberIndex, exp));
-        }
-      }
+    // update Pokemon defeated count except for MEs that disable it
+    if (!isMysteryEncounter || !globalScene.currentBattle.mysteryEncounter?.preventGameStatsUpdates) {
+      globalScene.gameData.gameStats.pokemonDefeated++;
     }
 
-    if (!this.scene.getEnemyParty().find(p => this.scene.currentBattle.battleType ? !p?.isFainted(true) : p.isOnField())) {
-      this.scene.pushPhase(new BattleEndPhase(this.scene));
-      if (this.scene.currentBattle.battleType === BattleType.TRAINER) {
-        this.scene.pushPhase(new TrainerVictoryPhase(this.scene));
+    const expValue = this.getPokemon().getExpValue();
+    globalScene.applyPartyExp(expValue, true);
+
+    if (isMysteryEncounter) {
+      handleMysteryEncounterVictory(false, this.isExpOnly);
+      return this.end();
+    }
+
+    if (
+      !globalScene
+        .getEnemyParty()
+        .find(p => (globalScene.currentBattle.battleType === BattleType.WILD ? p.isOnField() : !p?.isFainted(true)))
+    ) {
+      globalScene.pushPhase(new BattleEndPhase(true));
+      if (globalScene.currentBattle.battleType === BattleType.TRAINER) {
+        globalScene.pushPhase(new TrainerVictoryPhase());
       }
-      if (this.scene.gameMode.isEndless || !this.scene.gameMode.isWaveFinal(this.scene.currentBattle.waveIndex)) {
-        this.scene.pushPhase(new EggLapsePhase(this.scene));
-        if (this.scene.currentBattle.waveIndex % 10) {
-          this.scene.pushPhase(new SelectModifierPhase(this.scene));
-        } else if (this.scene.gameMode.isDaily) {
-          this.scene.pushPhase(new ModifierRewardPhase(this.scene, modifierTypes.EXP_CHARM));
-          if (this.scene.currentBattle.waveIndex > 10 && !this.scene.gameMode.isWaveFinal(this.scene.currentBattle.waveIndex)) {
-            this.scene.pushPhase(new ModifierRewardPhase(this.scene, modifierTypes.GOLDEN_POKEBALL));
-          }
-        } else {
-          const superExpWave = !this.scene.gameMode.isEndless ? (this.scene.offsetGym ? 0 : 20) : 10;
-          if (this.scene.gameMode.isEndless && this.scene.currentBattle.waveIndex === 10) {
-            this.scene.pushPhase(new ModifierRewardPhase(this.scene, modifierTypes.EXP_SHARE));
-          }
-          if (this.scene.currentBattle.waveIndex <= 750 && (this.scene.currentBattle.waveIndex <= 500 || (this.scene.currentBattle.waveIndex % 30) === superExpWave)) {
-            this.scene.pushPhase(new ModifierRewardPhase(this.scene, (this.scene.currentBattle.waveIndex % 30) !== superExpWave || this.scene.currentBattle.waveIndex > 250 ? modifierTypes.EXP_CHARM : modifierTypes.SUPER_EXP_CHARM));
-          }
-          if (this.scene.currentBattle.waveIndex <= 150 && !(this.scene.currentBattle.waveIndex % 50)) {
-            this.scene.pushPhase(new ModifierRewardPhase(this.scene, modifierTypes.GOLDEN_POKEBALL));
-          }
-          if (this.scene.gameMode.isEndless && !(this.scene.currentBattle.waveIndex % 50)) {
-            this.scene.pushPhase(new ModifierRewardPhase(this.scene, !(this.scene.currentBattle.waveIndex % 250) ? modifierTypes.VOUCHER_PREMIUM : modifierTypes.VOUCHER_PLUS));
-            this.scene.pushPhase(new AddEnemyBuffModifierPhase(this.scene));
+      if (globalScene.gameMode.isEndless || !globalScene.gameMode.isWaveFinal(globalScene.currentBattle.waveIndex)) {
+        globalScene.pushPhase(new EggLapsePhase());
+        if (globalScene.gameMode.isClassic) {
+          switch (globalScene.currentBattle.waveIndex) {
+            case ClassicFixedBossWaves.RIVAL_1:
+            case ClassicFixedBossWaves.RIVAL_2:
+              // Get event modifiers for this wave
+              timedEventManager
+                .getFixedBattleEventRewards(globalScene.currentBattle.waveIndex)
+                .map(r => globalScene.pushPhase(new ModifierRewardPhase(modifierTypes[r])));
+              break;
+            case ClassicFixedBossWaves.EVIL_BOSS_2:
+              // Should get Lock Capsule on 165 before shop phase so it can be used in the rewards shop
+              globalScene.pushPhase(new ModifierRewardPhase(modifierTypes.LOCK_CAPSULE));
+              break;
           }
         }
-        this.scene.pushPhase(new NewBattlePhase(this.scene));
+        if (globalScene.currentBattle.waveIndex % 10) {
+          globalScene.pushPhase(new SelectModifierPhase(undefined, undefined, this.getFixedBattleCustomModifiers()));
+        } else if (globalScene.gameMode.isDaily) {
+          globalScene.pushPhase(new ModifierRewardPhase(modifierTypes.EXP_CHARM));
+          if (
+            globalScene.currentBattle.waveIndex > 10 &&
+            !globalScene.gameMode.isWaveFinal(globalScene.currentBattle.waveIndex)
+          ) {
+            globalScene.pushPhase(new ModifierRewardPhase(modifierTypes.GOLDEN_POKEBALL));
+          }
+        } else {
+          const superExpWave = !globalScene.gameMode.isEndless ? (globalScene.offsetGym ? 0 : 20) : 10;
+          if (globalScene.gameMode.isEndless && globalScene.currentBattle.waveIndex === 10) {
+            globalScene.pushPhase(new ModifierRewardPhase(modifierTypes.EXP_SHARE));
+          }
+          if (
+            globalScene.currentBattle.waveIndex <= 750 &&
+            (globalScene.currentBattle.waveIndex <= 500 || globalScene.currentBattle.waveIndex % 30 === superExpWave)
+          ) {
+            globalScene.pushPhase(
+              new ModifierRewardPhase(
+                globalScene.currentBattle.waveIndex % 30 !== superExpWave || globalScene.currentBattle.waveIndex > 250
+                  ? modifierTypes.EXP_CHARM
+                  : modifierTypes.SUPER_EXP_CHARM,
+              ),
+            );
+          }
+          if (globalScene.currentBattle.waveIndex <= 150 && !(globalScene.currentBattle.waveIndex % 50)) {
+            globalScene.pushPhase(new ModifierRewardPhase(modifierTypes.GOLDEN_POKEBALL));
+          }
+          if (globalScene.gameMode.isEndless && !(globalScene.currentBattle.waveIndex % 50)) {
+            globalScene.pushPhase(
+              new ModifierRewardPhase(
+                !(globalScene.currentBattle.waveIndex % 250)
+                  ? modifierTypes.VOUCHER_PREMIUM
+                  : modifierTypes.VOUCHER_PLUS,
+              ),
+            );
+            globalScene.pushPhase(new AddEnemyBuffModifierPhase());
+          }
+        }
+
+        if (globalScene.gameMode.hasRandomBiomes || globalScene.isNewBiome()) {
+          globalScene.pushPhase(new SelectBiomePhase());
+        }
+
+        globalScene.pushPhase(new NewBattlePhase());
       } else {
-        this.scene.currentBattle.battleType = BattleType.CLEAR;
-        this.scene.score += this.scene.gameMode.getClearScoreBonus();
-        this.scene.updateScoreText();
-        this.scene.pushPhase(new GameOverPhase(this.scene, true));
+        globalScene.currentBattle.battleType = BattleType.CLEAR;
+        globalScene.score += globalScene.gameMode.getClearScoreBonus();
+        globalScene.updateScoreText();
+        globalScene.pushPhase(new GameOverPhase(true));
       }
     }
 
     this.end();
+  }
+
+  /**
+   * If this wave is a fixed battle with special custom modifier rewards,
+   * will pass those settings to the upcoming {@linkcode SelectModifierPhase}`.
+   */
+  getFixedBattleCustomModifiers(): CustomModifierSettings | undefined {
+    const gameMode = globalScene.gameMode;
+    const waveIndex = globalScene.currentBattle.waveIndex;
+    if (gameMode.isFixedBattle(waveIndex)) {
+      return gameMode.getFixedBattle(waveIndex).customModifierRewardSettings;
+    }
+
+    return undefined;
   }
 }

@@ -1,8 +1,8 @@
-import BattleScene from "../battle-scene";
 import MessageUiHandler from "./message-ui-handler";
 import { TextStyle, addTextObject } from "./text";
-import { Mode } from "./ui";
-import {Button} from "#enums/buttons";
+import { UiMode } from "#enums/ui-mode";
+import { Button } from "#enums/buttons";
+import { globalScene } from "#app/global-scene";
 
 export default class EvolutionSceneHandler extends MessageUiHandler {
   public evolutionContainer: Phaser.GameObjects.Container;
@@ -11,8 +11,8 @@ export default class EvolutionSceneHandler extends MessageUiHandler {
   public canCancel: boolean;
   public cancelled: boolean;
 
-  constructor(scene: BattleScene) {
-    super(scene, Mode.EVOLUTION_SCENE);
+  constructor() {
+    super(UiMode.EVOLUTION_SCENE);
   }
 
   setup() {
@@ -21,46 +21,35 @@ export default class EvolutionSceneHandler extends MessageUiHandler {
 
     const ui = this.getUi();
 
-    this.evolutionContainer = this.scene.add.container(0, -this.scene.game.canvas.height / 6);
-    ui.add(this.evolutionContainer);
+    this.evolutionContainer = globalScene.add.container(0, -globalScene.game.canvas.height / 6);
 
-    const messageBg = this.scene.add.sprite(0, 0, "bg", this.scene.windowType);
-    messageBg.setOrigin(0, 1);
-    messageBg.setVisible(false);
-    ui.add(messageBg);
+    const messageBg = globalScene.add.sprite(0, 0, "bg", globalScene.windowType).setOrigin(0, 1).setVisible(false);
 
     this.messageBg = messageBg;
 
-    this.messageContainer = this.scene.add.container(12, -39);
-    this.messageContainer.setVisible(false);
-    ui.add(this.messageContainer);
+    this.messageContainer = globalScene.add.container(12, -39).setVisible(false);
 
-    const message = addTextObject(this.scene, 0, 0, "", TextStyle.MESSAGE, {
+    const message = addTextObject(0, 0, "", TextStyle.MESSAGE, {
       maxLines: 2,
       wordWrap: {
-        width: 1780
-      }
+        width: 1780,
+      },
     });
     this.messageContainer.add(message);
 
+    ui.add([this.evolutionContainer, this.messageBg, this.messageContainer]);
+
     this.message = message;
 
-    const prompt = this.scene.add.sprite(0, 0, "prompt");
-    prompt.setVisible(false);
-    prompt.setOrigin(0, 0);
-    this.messageContainer.add(prompt);
-
-    this.prompt = prompt;
+    this.initPromptSprite(this.messageContainer);
   }
 
   show(_args: any[]): boolean {
     super.show(_args);
 
-    this.scene.ui.bringToTop(this.evolutionContainer);
-    this.scene.ui.bringToTop(this.messageBg);
-    this.scene.ui.bringToTop(this.messageContainer);
-    this.messageBg.setVisible(true);
-    this.messageContainer.setVisible(true);
+    globalScene.ui.bringToTop(this.evolutionContainer);
+    globalScene.ui.bringToTop(this.messageBg.setVisible(true));
+    globalScene.ui.bringToTop(this.messageContainer.setVisible(true));
 
     return true;
   }
@@ -87,7 +76,7 @@ export default class EvolutionSceneHandler extends MessageUiHandler {
     return false;
   }
 
-  setCursor(_cursor: integer): boolean {
+  setCursor(_cursor: number): boolean {
     return false;
   }
 

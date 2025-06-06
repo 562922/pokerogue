@@ -5,101 +5,39 @@ on:
   # but only for the main branch
   push:
     branches:
-      - main  # Trigger on push events to the main branch
+      - main # Trigger on push events to the main branch
       - beta # Trigger on push events to the beta branch
   pull_request:
     branches:
-      - main  # Trigger on pull request events targeting the main branch
+      - main # Trigger on pull request events targeting the main branch
       - beta # Trigger on pull request events targeting the beta branch
   merge_group:
     types: [checks_requested]
 
 jobs:
-  run-misc-tests:  # Define a job named "run-tests"
-    name: Run misc tests  # Human-readable name for the job
-    runs-on: ubuntu-latest  # Specify the latest Ubuntu runner for the job
-
+  check-path-change-filter:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      all: ${{ steps.filter.outputs.all }}
     steps:
-      - name: Check out Git repository  # Step to check out the repository
-        uses: actions/checkout@v4  # Use the checkout action version 4
-
-      - name: Set up Node.js  # Step to set up Node.js environment
-        uses: actions/setup-node@v4  # Use the setup-node action version 4
-        with:
-          node-version: 20  # Specify Node.js version 20
-
-      - name: Install Node.js dependencies  # Step to install Node.js dependencies
-        run: npm ci  # Use 'npm ci' to install dependencies
-
-      - name: pre-test # pre-test to check overrides
-        run: npx vitest run --project pre 
-      - name: test misc
-        run: npx vitest --project misc
-
-  run-abilities-tests:
-    name: Run abilities tests
-    runs-on: ubuntu-latest 
-    steps:
-      - name: Check out Git repository
+      - name: checkout
         uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36
+        id: filter
         with:
-          node-version: 20
-      - name: Install Node.js dependencies
-        run: npm ci
-      - name: pre-test
-        run: npx vitest run --project pre 
-      - name: test abilities
-        run: npx vitest --project abilities
+          filters: .github/test-filters.yml
 
-  run-items-tests:
-    name: Run items tests
-    runs-on: ubuntu-latest 
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install Node.js dependencies
-        run: npm ci
-      - name: pre-test
-        run: npx vitest run --project pre 
-      - name: test items
-        run: npx vitest --project items
-
-  run-moves-tests:
-    name: Run moves tests
-    runs-on: ubuntu-latest 
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install Node.js dependencies
-        run: npm ci
-      - name: pre-test
-        run: npx vitest run --project pre 
-      - name: test moves
-        run: npx vitest --project moves
-
-  run-battle-tests:
-    name: Run battle tests
-    runs-on: ubuntu-latest 
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install Node.js dependencies
-        run: npm ci
-      - name: pre-test
-        run: npx vitest run --project pre 
-      - name: test battle
-        run: npx vitest --project battle
+  run-tests:
+    name: Run Tests
+    needs: check-path-change-filter
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    uses: ./.github/workflows/test-shard-template.yml
+    with:
+      project: main
+      shard: ${{ matrix.shard }}
+      totalShards: 5
+      skip: ${{ needs.check-path-change-filter.outputs.all != 'true'}}

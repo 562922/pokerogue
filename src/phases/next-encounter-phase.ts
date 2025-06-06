@@ -1,46 +1,84 @@
-import BattleScene from "#app/battle-scene";
+import { globalScene } from "#app/global-scene";
 import { EncounterPhase } from "./encounter-phase";
 
+/**
+ * The phase between defeating an encounter and starting another wild wave.
+ * Handles generating, loading and preparing for it.
+ */
 export class NextEncounterPhase extends EncounterPhase {
-  constructor(scene: BattleScene) {
-    super(scene);
-  }
-
   start() {
     super.start();
   }
 
   doEncounter(): void {
-    this.scene.playBgm(undefined, true);
+    globalScene.playBgm(undefined, true);
 
-    for (const pokemon of this.scene.getParty()) {
+    // Reset all player transient wave data/intel before starting a new wild encounter.
+    // We exclusively reset wave data here as wild waves are considered one continuous "battle"
+    // for lack of an arena transition.
+    for (const pokemon of globalScene.getPlayerParty()) {
       if (pokemon) {
-        pokemon.resetBattleData();
+        pokemon.resetWaveData();
       }
     }
 
-    this.scene.arenaNextEnemy.setBiome(this.scene.arena.biomeType);
-    this.scene.arenaNextEnemy.setVisible(true);
+    globalScene.arenaNextEnemy.setBiome(globalScene.arena.biomeType);
+    globalScene.arenaNextEnemy.setVisible(true);
 
-    const enemyField = this.scene.getEnemyField();
-    this.scene.tweens.add({
-      targets: [this.scene.arenaEnemy, this.scene.arenaNextEnemy, this.scene.currentBattle.trainer, enemyField, this.scene.lastEnemyTrainer].flat(),
+    const enemyField = globalScene.getEnemyField();
+    const moveTargets: any[] = [
+      globalScene.arenaEnemy,
+      globalScene.arenaNextEnemy,
+      globalScene.currentBattle.trainer,
+      enemyField,
+      globalScene.lastEnemyTrainer,
+    ];
+    const lastEncounterVisuals = globalScene.lastMysteryEncounter?.introVisuals;
+    if (lastEncounterVisuals) {
+      moveTargets.push(lastEncounterVisuals);
+    }
+    const nextEncounterVisuals = globalScene.currentBattle.mysteryEncounter?.introVisuals;
+    if (nextEncounterVisuals) {
+      const enterFromRight = nextEncounterVisuals.enterFromRight;
+      if (enterFromRight) {
+        nextEncounterVisuals.x += 500;
+        globalScene.tweens.add({
+          targets: nextEncounterVisuals,
+          x: "-=200",
+          duration: 2000,
+        });
+      } else {
+        moveTargets.push(nextEncounterVisuals);
+      }
+    }
+
+    globalScene.tweens.add({
+      targets: moveTargets.flat(),
       x: "+=300",
       duration: 2000,
       onComplete: () => {
-        this.scene.arenaEnemy.setBiome(this.scene.arena.biomeType);
-        this.scene.arenaEnemy.setX(this.scene.arenaNextEnemy.x);
-        this.scene.arenaEnemy.setAlpha(1);
-        this.scene.arenaNextEnemy.setX(this.scene.arenaNextEnemy.x - 300);
-        this.scene.arenaNextEnemy.setVisible(false);
-        if (this.scene.lastEnemyTrainer) {
-          this.scene.lastEnemyTrainer.destroy();
+        globalScene.arenaEnemy.setBiome(globalScene.arena.biomeType);
+        globalScene.arenaEnemy.setX(globalScene.arenaNextEnemy.x);
+        globalScene.arenaEnemy.setAlpha(1);
+        globalScene.arenaNextEnemy.setX(globalScene.arenaNextEnemy.x - 300);
+        globalScene.arenaNextEnemy.setVisible(false);
+        if (globalScene.lastEnemyTrainer) {
+          globalScene.lastEnemyTrainer.destroy();
+        }
+        if (lastEncounterVisuals) {
+          globalScene.field.remove(lastEncounterVisuals, true);
+          globalScene.lastMysteryEncounter!.introVisuals = undefined;
         }
 
         if (!this.tryOverrideForBattleSpec()) {
           this.doEncounterCommon();
         }
-      }
+      },
     });
   }
+
+  /**
+   * Do nothing (since this is simply the next wave in the same biome).
+   */
+  trySetWeatherIfNewBiome(): void {}
 }
